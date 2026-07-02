@@ -1,0 +1,193 @@
+package com.rickqin.workphoto;
+
+import com.rickqin.workphoto.ui.NotiBox;
+import com.vaadin.flow.component.ClientCallable;
+import com.vaadin.flow.component.button.Button;
+import com.vaadin.flow.component.button.ButtonVariant;
+import com.vaadin.flow.component.dependency.JavaScript;
+import com.vaadin.flow.component.html.H2;
+import com.vaadin.flow.component.icon.VaadinIcon;
+import com.vaadin.flow.component.notification.Notification;
+import com.vaadin.flow.component.orderedlayout.FlexComponent;
+import com.vaadin.flow.component.orderedlayout.FlexLayout;
+import com.vaadin.flow.component.orderedlayout.VerticalLayout;
+import com.vaadin.flow.component.textfield.TextField;
+import com.vaadin.flow.component.upload.Upload;
+import com.vaadin.flow.router.BeforeEnterEvent;
+import com.vaadin.flow.router.BeforeEnterObserver;
+import com.vaadin.flow.router.PageTitle;
+import com.vaadin.flow.router.Route;
+import com.vaadin.flow.server.streams.InMemoryUploadHandler;
+import java.io.ByteArrayOutputStream;
+
+import java.util.List;
+import java.util.Map;
+import org.apache.commons.lang3.StringUtils;
+
+@Route("")
+@JavaScript("./js/camera-util.js")
+@JavaScript("./js/image-compress.js")
+@PageTitle("Work Photo")
+class WorkPhotoView extends VerticalLayout implements BeforeEnterObserver {
+
+    // 长度1-20，只包含字母和数字
+    private static final String REGEX_WORKORDER = "^[a-zA-Z0-9]{1,20}$";
+
+    private final TextField txtWorkOrder;
+    private final Upload upload;
+    private final Button btnUpload;
+    private final Button btnShoot;
+    private final FlexLayout thumbnailContainer = new FlexLayout();
+    private final NotiBox notibox = new NotiBox();
+
+    private final PhotoService photoService;
+
+    public WorkPhotoView(PhotoService photoService) {
+        this.photoService = photoService;
+
+        txtWorkOrder = new TextField("Work Order");
+
+        btnUpload = new Button("Upload", VaadinIcon.FILE_ADD.create());
+        btnUpload.addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_LARGE);
+//        btnUpload.addClickListener(e -> {
+//            if (validateWorkorderField()) {
+//                getElement().executeJs("window.cameraProcessor.startCapture($0, $1)", getElement(), PhotoMethod.FILE.getMethod());
+//            }
+//        });
+        
+        InMemoryUploadHandler uploadHandler = new InMemoryUploadHandler((metadata, data) -> {
+            String fileName = metadata.fileName();
+            String mimeType = metadata.contentType();
+            Notification.show(
+                    "Uploaded: " + fileName
+                    + " (" + data.length / 1024 + " KB)"
+            );
+            // Example: save to database later
+            // photoService.save(fileName, mimeType, data);
+        });
+
+        upload = new Upload(uploadHandler);
+        upload.setUploadButton(btnUpload);
+        upload.setAcceptedFileTypes("image/*");
+        upload.setMaxFiles(10);
+        upload.setDropAllowed(false);
+
+        
+
+        btnShoot = new Button("Camera", VaadinIcon.CAMERA.create());
+        btnShoot.addThemeVariants(ButtonVariant.LUMO_PRIMARY, ButtonVariant.LUMO_LARGE);
+        btnShoot.addClickListener(e -> {
+            if (validateWorkorderField()) {
+                getElement().executeJs("window.cameraProcessor.startCapture($0, $1)", getElement(), PhotoMethod.CAMERA.getMethod());
+            }
+        });
+
+        thumbnailContainer.setSizeFull();
+        thumbnailContainer.setFlexDirection(FlexLayout.FlexDirection.ROW);
+        thumbnailContainer.setJustifyContentMode(FlexComponent.JustifyContentMode.CENTER);
+        thumbnailContainer.setAlignItems(FlexComponent.Alignment.STRETCH);
+        thumbnailContainer.setFlexWrap(FlexLayout.FlexWrap.WRAP);
+
+        setAlignItems(Alignment.CENTER);
+        add(new H2("Work Photo"), txtWorkOrder, btnUpload, btnShoot);
+        add(thumbnailContainer);
+        
+        enableClientSideCompression(upload);
+    }
+    
+    private void enableClientSideCompression(Upload upload) {
+        upload.getElement().executeJs(REGEX_WORKORDER, parameters)
+    }
+
+    @ClientCallable
+    public void confirmPhoto(String base64Data) {
+        processFinalSave(base64Data, txtWorkOrder.getValue(), null);
+    }
+
+    @ClientCallable
+    public void retakePhoto(String method) {
+        getElement().executeJs("window.cameraProcessor.startCapture($0, $1)", getElement(), PhotoMethod.CAMERA.getMethod());
+    }
+
+//    @ClientCallable
+//    public void confirmPhoto(String base64Data, String method) {
+//        Dialog confirmDialog = new Dialog();
+//        confirmDialog.setHeaderTitle("Confirm Result");
+//
+//        Image preview = new Image(base64Data, "preview");
+//        preview.setWidthFull();
+//        preview.getStyle().set("max-height", "60vh");
+//
+//        Button uploadBtn = new Button("Confirm", e -> {
+//            processFinalSave(base64Data, txtWorkOrder.getValue(), null);
+//            confirmDialog.close();
+//        });
+//        uploadBtn.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
+//
+//        Button retakeBtn = new Button("Redo", e -> {
+//            confirmDialog.close();
+//            getElement().executeJs("window.cameraProcessor.startCapture($0, $1)", getElement(), method);
+//        });
+//
+//        confirmDialog.add(new VerticalLayout(preview));
+//        confirmDialog.getFooter().add(retakeBtn, uploadBtn);
+//        confirmDialog.open();
+//    }
+    @Override
+    public void beforeEnter(BeforeEnterEvent event) {
+
+        Map<String, List<String>> params = event.getLocation()
+                .getQueryParameters()
+                .getParameters();
+
+        // URL参数合法性验证
+        if (params.containsKey("workorder")) {
+            String workorder = params.get("workorder").get(0);
+            if (workorder != null && workorder.matches(REGEX_WORKORDER)) {
+                txtWorkOrder.setValue(workorder);
+                txtWorkOrder.setReadOnly(true);
+            } else {
+                txtWorkOrder.setReadOnly(false);
+                notibox.open("Workorder number is invalid. Please enter it manually.", NotiBox.NotiType.ERROR);
+            }
+        } else {
+            txtWorkOrder.clear();
+            txtWorkOrder.setReadOnly(false);
+        }
+    }
+
+    private boolean validateWorkorderField() {
+        if (StringUtils.isBlank(txtWorkOrder.getValue())
+                || !txtWorkOrder.getValue().trim().matches(REGEX_WORKORDER)) {
+            notibox.open("Workorder number is invalid. Please check it.", NotiBox.NotiType.ERROR);
+            txtWorkOrder.focus();
+            return false;
+        } else {
+            return true;
+        }
+    }
+
+    private void processFinalSave(String base64Data, String workorder, String notes) {
+        try {
+            photoService.savePhoto(base64Data, workorder, notes);
+            notibox.open("Photo has been uploaded.", NotiBox.NotiType.SUCCESSFUL);
+        } catch (Exception ex) {
+            notibox.open("Failed to save photo: " + ex.getMessage(), NotiBox.NotiType.ERROR);
+        }
+    }
+
+    enum PhotoMethod {
+        CAMERA("camera"),
+        FILE("file");
+
+        private final String method;
+
+        PhotoMethod(String method) {
+            this.method = method;
+        }
+
+        public String getMethod() {
+            return method;
+        }
+    }
+}
